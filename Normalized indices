@@ -1,0 +1,44 @@
+/*This code is developed by Yogesh Bhattarai*/
+//Import sentinel data collection
+var s2 = ee.ImageCollection("COPERNICUS/S2");
+var aoi = ee.FeatureCollection(geometry);
+//Zoom the map to the geometry with selected scale
+Map.centerObject(aoi,7);
+//Filtering data with date and clood percentages
+var filtered = s2.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+  .filter(ee.Filter.date('2019-01-01', '2020-01-01'))
+  .filter(ee.Filter.bounds(geometry))
+var image = filtered.median(); 
+
+// Calculate  Normalized Difference Vegetation Index (NDVI)
+// 'NIR' (B8) and 'RED' (B4)
+var ndvi = image.normalizedDifference(['B8', 'B4']).rename(['ndvi']);
+
+// Calculate Modified Normalized Difference Water Index (MNDWI)
+// 'GREEN' (B3) and 'SWIR1' (B11)
+var mndwi = image.normalizedDifference(['B3', 'B11']).rename(['mndwi']); 
+
+var rgbVis = {min: 0.0, max: 3000, bands: ['B4', 'B3', 'B2']};
+var ndviVis = {min:0, max:1, palette: ['white', 'green']}
+var ndwiVis = {min:0, max:0.5, palette: ['white', 'blue']}
+var outlineStyle = {
+  color: '#000000',  // black color for geometry
+  width: 2          // Line width in pixels
+};
+Map.addLayer(geometry, outlineStyle);
+Map.addLayer(image.clip(geometry), rgbVis, 'Image');
+Map.addLayer(mndwi.clip(geometry), ndwiVis, 'mndwi')
+Map.addLayer(ndvi.clip(geometry), ndviVis, 'ndvi')
+var exportParams = {
+  image: mndwi,
+  folder: 'US',
+  description: 'mndwi1',  // The name for the exported file
+  scale: 1,                    // The desired resolution in meters per pixel
+  crs: 'EPSG:4326',             // The coordinate reference system
+  fileFormat: 'GeoTIFF',
+  maxPixels: 5e12, 
+  region: geometry,
+};
+
+// Export the image to Google Drive
+Export.image.toDrive(exportParams);
