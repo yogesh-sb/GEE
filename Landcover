@@ -1,0 +1,95 @@
+/* This code is developed by Yogesh Bhattarai (yogeshbhattarai.sb@gmail.com)*/
+// Select image from a collection using filters
+var landsat = imageCollection.filterDate('2015-01-01','2015-12-10') // Date can be changed
+              .filterBounds(roi).sort('CLOUD_COVER').first();
+       
+// Draw/add a boundary - name it 'boundary' and add to the map          
+Map.addLayer(boundary,{},'Boundary');
+
+// Clip landsat image by provided boundary
+var image = landsat.clipToCollection(boundary);
+
+// Add true and false color composites for creating training dataset
+Map.addLayer(image,imageVisParam, 'Landsat-true-Kathmandu',false);
+Map.addLayer(image, {bands: 'B6,B5,B2', min: 0, max: 0.3},'Landsat-false-color',false);
+
+
+// Map cenetering
+Map.centerObject(boundary,12);
+
+// Select the bands as parameters for machine learning algorithm
+var bands = ['B1','B2','B3','B4','B5','B6','B7'];
+
+// Store the selected bands in a temporary variable
+var spectra = image.select(bands);
+
+/* Optional: plot the endmembers- Spectral plot
+print(ui.Chart.image.regions(spectra, ee.FeatureCollection([ee.Feature(urban_s, {label: 'urban'}), 
+    ee.Feature(water_s, {label: 'water'}),
+    ee.Feature(vegetation_s, {label: 'vegetation'}),
+    ee.Feature(baren_land_s, {label: 'baren_land'})]), 
+  ee.Reducer.mean(), 30, 'label', [0.43, 0.51, 0.55, 0.67, 0.88, 1.57, 2.11]));*/
+
+// Merging the training set for feeding to model
+var trainingfc= urban_s.merge(water_s).merge(vegetation_s).merge(baren_land_s);
+
+
+// Extract the values of different bands 
+var training= image.select(bands).sampleRegions({
+  collection: trainingfc,
+  properties: ['landcover'],
+  scale: 30
+});
+
+// Print information about training dataset
+print(' The merged training set:', training);
+
+// Splitting the data-- to check the accuracy-- using random sampling technique
+var withRandom = training.randomColumn('random');
+
+// We want to reserve some of the data for testing, to avoid overfitting the model.
+var split = 0.7;  // Roughly 70% training, 30% testing.
+var trainingPartition = withRandom.filter(ee.Filter.lt('random', split));
+var testingPartition = withRandom.filter(ee.Filter.gte('random', split));
+
+// Model set up
+var classifier = ee.Classifier.smileCart().train({
+ features: trainingPartition,
+ classProperty: 'landcover',
+ inputProperties: bands
+});
+
+// Model run
+var classified = image.select(bands).classify(classifier);
+// Add classified layer to the map
+
+Map.addLayer(classified, {min: 0, max: 3, palette: ['ff2c0a', '#100cff', '#10ff59','#eaf54a']}, 'classification');
+// Get a confusion matrix representing resubstitution accuracy.
+
+var trainAccuracy = classifier.confusionMatrix();
+print('Resubstitution error matrix: ', trainAccuracy);
+print('Training overall accuracy: ', trainAccuracy.accuracy());
+
+// Information about testing data
+print ('Data before classification',testingPartition);
+
+// run testing data
+var test = testingPartition.classify(classifier);
+
+// Information after run
+print (' The classified set',test);
+
+// Print the confusion matrix.
+var confusionMatrix = test.errorMatrix('landcover', 'classification');
+print('Confusion Matrix', confusionMatrix);
+print('Validation accuracy: ',confusionMatrix.accuracy());
+
+
+// Export the classified landuse map to google drive and download to see on ArcGIS/QGIS
+Export.image.toDrive({
+ image: classified,
+ description:"Landcover2015",
+ scale: 30,
+ region:boundary,
+ maxPixels:3e10
+});
